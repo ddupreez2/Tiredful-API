@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # SonarQube config from repository/organization secrets
-      SONAR_APPLICATION_NAME: "darrenCast - Tiredful-API"
+      SONAR_APPLICATION_KEY: "darrenCast_Tiredful-API"
       SONAR_APPLICATION_URL: "https://sonarqube.managedbyparabellyx.com"
       SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
     steps:
@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           sonar-scanner \
-            -Dsonar.projectKey="${SONAR_APPLICATION_NAME}" \
+            -Dsonar.projectKey="${SONAR_APPLICATION_KEY}" \
             -Dsonar.sources=. \
             -Dsonar.host.url="${SONAR_APPLICATION_URL}" \
             -Dsonar.python.version=3.12 \
