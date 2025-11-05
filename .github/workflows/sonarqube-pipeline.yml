@@ -32,7 +32,6 @@ jobs:
       SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
       SONARQUBE_HOST_URL: https://sonarqube.managedbyparabellyx.com
       SONAR_SCANNER_VERSION: 6.2.1.4610
-      SONAR_SCANNER_HOME: ${{ github.workspace }}/.sonar/sonar-scanner-${{ env.SONAR_SCANNER_VERSION }}
 
     steps:
       # Checkout the repository code to the runner
@@ -44,6 +43,9 @@ jobs:
 
       # Download, install, and run SonarScanner (same approach as your Azure pipeline)
       - name: Download, Configure, and Run SonarScanner
+        env:
+          # Construct SONAR_SCANNER_HOME using job-level env vars (available here)
+          SONAR_SCANNER_HOME: ${{ github.workspace }}/.sonar/sonar-scanner-${{ env.SONAR_SCANNER_VERSION }}
         shell: bash
         run: |
           set -euo pipefail

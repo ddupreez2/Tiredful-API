@@ -15,9 +15,6 @@ jobs:
   sbom:
     runs-on: ubuntu-latest
     env:
-      # Use runner temp as the Azure `Agent.TempDirectory` equivalent
-      # Temporary path where the generated BOM XML file will be stored
-      BOM_PATH: ${{ runner.temp }}/bom.xml
       # Dependency-Track API key for authentication (stored in GitHub Secrets)
       DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
       # Dependency-Track project UUID to identify which project this BOM belongs to
@@ -54,6 +51,10 @@ jobs:
       # Analyzes requirements.txt and creates a CycloneDX XML BOM file
       # Mirrors: cyclonedx-py requirements -o $(Agent.TempDirectory)/bom.xml
       - name: Generate BOM from requirements.txt
+        env:
+          # Use runner temp as the Azure `Agent.TempDirectory` equivalent
+          # Temporary path where the generated BOM XML file will be stored
+          BOM_PATH: ${{ runner.temp }}/bom.xml
         run: |
           # Exit on error, undefined variables, and pipe failures
           set -euo pipefail
@@ -74,6 +75,8 @@ jobs:
       # Mirrors the Azure curl call
       - name: Upload BOM to Dependency-Track
         env:
+          # Use runner temp as the Azure `Agent.TempDirectory` equivalent
+          BOM_PATH: ${{ runner.temp }}/bom.xml
           # Re-export env vars for this step (inherited from job-level env)
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
