@@ -58,6 +58,9 @@ jobs:
 
           sonar-scanner --version
 
+          # Return to project root for analysis
+          cd "$GITHUB_WORKSPACE"
+
           sonar-scanner \
             -Dsonar.projectKey="${SONAR_APPLICATION_KEY}" \
             -Dsonar.sources=. \
