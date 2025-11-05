@@ -48,16 +48,16 @@ jobs:
             python -m pip install cyclonedx-bom
             if [ -f "poetry.lock" ]; then
               echo "Generating Python BOM from poetry.lock..."
-              python -m cyclonedx_py poetry --format xml --output-file "${BOM_DIR}/bom-python.xml"
+              python -m cyclonedx_py poetry -o "${BOM_DIR}/bom-python.xml" --format xml
             elif [ -f "requirements.txt" ] || ls requirements*.txt >/dev/null 2>&1; then
               REQ_FILE="$(ls requirements*.txt 2>/dev/null | head -n1)"
               [ -f "requirements.txt" ] && REQ_FILE="requirements.txt"
               echo "Generating Python BOM from ${REQ_FILE} ..."
-              python -m cyclonedx_py requirements --input-file "${REQ_FILE}" --format xml --output-file "${BOM_DIR}/bom-python.xml"
+              python -m cyclonedx_py requirements "${REQ_FILE}" -o "${BOM_DIR}/bom-python.xml" --format xml
             else
               echo "pyproject.toml without poetry.lock detected; trying environment scan (if any site-packages exist)."
               if python -c "import pkg_resources" 2>/dev/null; then
-                python -m cyclonedx_py environment --format xml --output-file "${BOM_DIR}/bom-python.xml"
+                python -m cyclonedx_py environment -o "${BOM_DIR}/bom-python.xml" --format xml
               else
                 echo "No lock/requirements or importable environment. Skipping Python BOM."
               fi
