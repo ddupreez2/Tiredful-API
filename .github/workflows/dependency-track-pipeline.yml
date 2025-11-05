@@ -18,69 +18,60 @@ name: SBOM → Dependency-Track
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main, broken ]
   workflow_dispatch:
 
 jobs:
   sbom:
     runs-on: ubuntu-latest
+
     env:
+      # Must be set in GitHub Secrets
       DTRACK_API_KEY_V2: ${{ secrets.DTRACK_API_KEY }}
       DTRACK_PROJECT_UUID_V2: ${{ secrets.DTRACK_PROJECT_UUID }}
       REQUIREMENTS_FILE: requirements.txt
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
       - name: Install CycloneDX
-        shell: bash
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
           python -m pip install cyclonedx-bom
-          which cyclonedx-py || true
 
       - name: Generate BOM File
-        shell: bash
         run: |
           set -euo pipefail
-          test -f "${REQUIREMENTS_FILE}" || { echo "Missing ${REQUIREMENTS_FILE}"; exit 1; }
+          test -f "$REQUIREMENTS_FILE" || { echo "Missing $REQUIREMENTS_FILE"; exit 1; }
 
           BOM_PATH="${RUNNER_TEMP}/bom.xml"
-          echo "BOM_PATH=${BOM_PATH}" >> "$GITHUB_ENV"
+          echo "BOM_PATH=$BOM_PATH" >> $GITHUB_ENV
 
-          # Match Azure behavior (use the CLI if present, else module)
-          if command -v cyclonedx-py >/dev/null 2>&1; then
-            cyclonedx-py requirements --file "${REQUIREMENTS_FILE}" -o "${BOM_PATH}"
-          else
-            python -m cyclonedx_py requirements --file "${REQUIREMENTS_FILE}" -o "${BOM_PATH}"
-          fi
+          # **OLD STYLE (matches your Azure pipeline)**
+          cyclonedx-py -i "$REQUIREMENTS_FILE" -o "$BOM_PATH"
 
-          ls -lh "${BOM_PATH}"
+          ls -lh "$BOM_PATH"
 
       - name: Upload BOM File
-        shell: bash
         env:
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
         run: |
           set -euo pipefail
-          test -s "${BOM_PATH}" || { echo "BOM missing/empty at ${BOM_PATH}"; exit 1; }
+          test -s "$BOM_PATH" || { echo "BOM missing/empty"; exit 1; }
 
           echo "Uploading BOM to Dependency-Track…"
-          # IMPORTANT: don't set Content-Type manually; let -F create the multipart boundary
+          # **IMPORTANT: no manual Content-Type header**
           curl -sS -f -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
-            -H "X-Api-Key: ${DTRACK_API_KEY}" \
-            -F "project=${DTRACK_PROJECT_UUID}" \
-            -F "bom=@${BOM_PATH};type=application/xml"
+            -H "X-Api-Key: $DTRACK_API_KEY" \
+            -F "project=$DTRACK_PROJECT_UUID" \
+            -F "bom=@$BOM_PATH;type=application/xml"
 
-      # Optional: keep artifact for debugging / download
       - uses: actions/upload-artifact@v4
         with:
           name: cyclonedx-bom
