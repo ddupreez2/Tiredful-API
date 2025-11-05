@@ -18,7 +18,7 @@ name: SBOM → Dependency-Track
 
 on:
   push:
-    branches: [ main, broken ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
