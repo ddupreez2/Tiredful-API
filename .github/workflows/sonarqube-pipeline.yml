@@ -16,7 +16,7 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     env:
-      # Dependency-Track config from repository/organization secrets
+      # SonarQube config from repository/organization secrets
       SONAR_APPLICATION_NAME: "darrenCast - Tiredful-API"
       SONAR_APPLICATION_URL: "https://sonarqube.managedbyparabellyx.com"
       SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
