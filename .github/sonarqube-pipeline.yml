@@ -1,0 +1,65 @@
+name: SonarQube Scan
+
+on:
+  push:
+    branches: [ "main", "broken" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonarqube-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      # Dependency-Track config from repository/organization secrets
+      SONAR_APPLICATION_NAME: "darrenCast - Tiredful-API"
+      SONAR_APPLICATION_URL: "https://sonarqube.managedbyparabellyx.com"
+      SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache SonarScanner
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/sonar-scanner-6.2.1.4610
+          key: sonar-scanner-6.2.1.4610
+
+      - name: Install SonarScanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SONAR_SCANNER_VERSION=6.2.1.4610
+          export SONAR_DIR="$HOME/.sonar"
+          export SONAR_SCANNER_HOME="$SONAR_DIR/sonar-scanner-$SONAR_SCANNER_VERSION"
+
+          if [ ! -d "$SONAR_SCANNER_HOME" ]; then
+            mkdir -p "$SONAR_DIR"
+            curl --create-dirs -sSLo "$SONAR_DIR/sonar-scanner.zip" \
+              "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION.zip"
+            unzip -o "$SONAR_DIR/sonar-scanner.zip" -d "$SONAR_DIR/"
+          fi
+
+          echo "$SONAR_SCANNER_HOME/bin" >> "$GITHUB_PATH"
+          echo "SONAR_SCANNER_OPTS=-server" >> "$GITHUB_ENV"
+
+      - name: Run SonarScanner
+        shell: bash
+        env:
+          SONAR_APPLICATION_NAME: ${{ vars.SONAR_APPLICATION_NAME }}
+          SONAR_APPLICATION_URL: ${{ vars.SONAR_APPLICATION_URL }}
+          SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey="${SONAR_APPLICATION_NAME}" \
+            -Dsonar.sources=. \
+            -Dsonar.host.url="${SONAR_APPLICATION_URL}" \
+            -Dsonar.python.version=3.12 \
+            -Dsonar.token="${SONAR_API_KEY}"
