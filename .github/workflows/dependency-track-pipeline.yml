@@ -1,170 +1,111 @@
-name: Universal SBOM (Python + Node + Java)
+# Workflow name: Generates a Software Bill of Materials (SBOM) in CycloneDX format
+# and uploads it to Dependency-Track for vulnerability analysis and license compliance
+name: Generate & Upload SBOM (CycloneDX → Dependency-Track)
 
+# Workflow triggers:
+# - Runs on push to main or broken branches
+# - Can be manually triggered via workflow_dispatch
 on:
   push:
-    branches: [ "master" ]
+    branches: [ main, broken ]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 jobs:
+  # Single job that generates SBOM and uploads to Dependency-Track
   sbom:
     runs-on: ubuntu-latest
     env:
-      # Output directory for SBOMs
-      BOM_DIR: /tmp/boms
-      # Dependency-Track config from repository/organization secrets
-      DTRACK_APPLICATION_URL: "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom"
+      # Use runner temp as the Azure `Agent.TempDirectory` equivalent
+      # Temporary path where the generated BOM XML file will be stored
+      BOM_PATH: ${{ runner.temp }}/bom.xml
+      # Dependency-Track API key for authentication (stored in GitHub Secrets)
       DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
-      DTRACK_PROJECT_UUID: "0760b41d-d109-41f0-856d-9350d7d05de6"
+      # Dependency-Track project UUID to identify which project this BOM belongs to
+      DTRACK_PROJECT_UUID: ${{ secrets.DTRACK_PROJECT_UUID }}
 
     steps:
+      # Step 1: Checkout repository code to runner
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Prepare workspace
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "${BOM_DIR}"
-          echo "Using BOM directory: ${BOM_DIR}"
-
-      # ---------- Python (pip / poetry) ----------
+      # Step 2: Set up Python environment
+      # Uses the latest Python 3.x version available on the runner
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
+          check-latest: true
 
-      - name: Python | Generate CycloneDX BOM
-        shell: bash
+      # Step 3: Install CycloneDX BOM generator tool
+      # CycloneDX is a lightweight SBOM standard that can be consumed by Dependency-Track
+      - name: Install CycloneDX for Python
         run: |
-          set -euo pipefail
-          if [ -f "requirements.txt" ] || ls requirements*.txt >/dev/null 2>&1 || [ -f "poetry.lock" ] || [ -f "pyproject.toml" ]; then
-            echo "Python project detected. Installing cyclonedx-bom..."
-            python -m pip install --upgrade pip
-            python -m pip install cyclonedx-bom
-            if [ -f "poetry.lock" ]; then
-              echo "Generating Python BOM from poetry.lock..."
-              python -m cyclonedx_py poetry -o "${BOM_DIR}/bom-python.xml"
-            elif [ -f "requirements.txt" ] || ls requirements*.txt >/dev/null 2>&1; then
-              REQ_FILE="$(ls requirements*.txt 2>/dev/null | head -n1)"
-              [ -f "requirements.txt" ] && REQ_FILE="requirements.txt"
-              echo "Generating Python BOM from ${REQ_FILE} ..."
-              python -m cyclonedx_py requirements -o "${BOM_DIR}/bom-python.xml"
-            else
-              echo "pyproject.toml without poetry.lock detected; trying environment scan (if any site-packages exist)."
-              if python -c "import pkg_resources" 2>/dev/null; then
-                python -m cyclonedx_py environment -o "${BOM_DIR}/bom-python.xml"
-              else
-                echo "No lock/requirements or importable environment. Skipping Python BOM."
-              fi
-            fi
-          else
-            echo "No Python manifest/lock found. Skipping Python BOM."
-          fi
+          echo "Installing CycloneDX..."
+          # Upgrade pip to latest version for better package compatibility
+          python -m pip install --upgrade pip
+          # Install the CycloneDX BOM generator for Python projects
+          python -m pip install cyclonedx-bom
+          # Verify installation by checking if command exists (non-blocking)
+          command -v cyclonedx-py || true
+          # Verify Python module can be imported (non-blocking)
+          python -c "import cyclonedx_py, sys; print('cyclonedx_py import OK')" || true
 
-      # ---------- Node.js (npm / yarn / pnpm) ----------
-      - name: Set up Node.js 20
-        if: ${{ hashFiles('**/package-lock.json', '**/yarn.lock', '**/pnpm-lock.yaml') != '' }}
-        uses: actions/setup-node@v4
+      # Step 4: Generate SBOM from requirements.txt
+      # Analyzes requirements.txt and creates a CycloneDX XML BOM file
+      # Mirrors: cyclonedx-py requirements -o $(Agent.TempDirectory)/bom.xml
+      - name: Generate BOM from requirements.txt
+        run: |
+          # Exit on error, undefined variables, and pipe failures
+          set -euo pipefail
+          echo "Generating BOM..."
+          # Try to use cyclonedx-py command if available, otherwise use Python module
+          if command -v cyclonedx-py >/dev/null 2>&1; then
+            cyclonedx-py requirements -o "$BOM_PATH"
+          else
+            python -m cyclonedx_py requirements -o "$BOM_PATH"
+          fi
+          echo "Verifying BOM..."
+          # List the generated BOM file to confirm it was created
+          ls -lh "$BOM_PATH"
+        # Note: If your file isn't named requirements.txt, set REQUIREMENTS_FILE in env or edit command.
+
+      # Step 5: Upload generated BOM to Dependency-Track API
+      # Dependency-Track will analyze the BOM for known vulnerabilities and license issues
+      # Mirrors the Azure curl call
+      - name: Upload BOM to Dependency-Track
+        env:
+          # Re-export env vars for this step (inherited from job-level env)
+          DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
+          DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
+        run: |
+          # Exit on error, undefined variables, and pipe failures
+          set -euo pipefail
+          # Validate that required secrets are configured
+          if [ -z "${DTRACK_API_KEY:-}" ] || [ -z "${DTRACK_PROJECT_UUID:-}" ]; then
+            echo "DTRACK secrets missing. Add DTRACK_API_KEY and DTRACK_PROJECT_UUID in repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          echo "Uploading BOM to Dependency-Track..."
+          # POST request to Dependency-Track BOM upload endpoint
+          # -sS: Silent mode but show errors
+          # -X POST: Use POST method
+          # -H: Set headers for content type and API key authentication
+          # -F: Form data fields (project UUID and BOM file)
+          curl -sS -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
+            -H "Content-Type: multipart/form-data" \
+            -H "X-Api-Key: ${DTRACK_API_KEY}" \
+            -F "project=${DTRACK_PROJECT_UUID}" \
+            -F "bom=@${BOM_PATH}"
+          echo "Upload complete."
+
+      # Step 6: Save BOM as workflow artifact for download/inspection
+      # This step is optional - allows you to download the generated BOM from GitHub Actions UI
+      - name: Keep SBOM as workflow artifact (optional)
+        uses: actions/upload-artifact@v4
         with:
-          node-version: '20'
-
-      - name: Node | Generate CycloneDX BOM
-        if: ${{ hashFiles('**/package.json') != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f "package.json" ]; then
-            if [ -f "package-lock.json" ] || [ -f "yarn.lock" ] || [ -f "pnpm-lock.yaml" ]; then
-              echo "Node project detected. Generating Node BOM..."
-              npx --yes @cyclonedx/cyclonedx-npm --output-file "${BOM_DIR}/bom-node.xml" --output-format xml
-            else
-              echo "package.json found but no lockfile (package-lock.json/yarn.lock/pnpm-lock.yaml). Skipping Node BOM."
-            fi
-          else
-            echo "No package.json found. Skipping Node BOM."
-          fi
-
-      # ---------- Java (Maven) ----------
-      - name: Install Maven
-        if: ${{ hashFiles('**/pom.xml') != '' }}
-        shell: bash
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y maven
-
-      - name: Java (Maven) | Generate CycloneDX BOM
-        if: ${{ hashFiles('**/pom.xml') != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Generating Maven CycloneDX BOM..."
-          mvn -q -B -DskipTests \
-            org.cyclonedx:cyclonedx-maven-plugin:makeAggregateBom \
-            -Dcyclonedx.skipAttach=true \
-            -DoutputFormat=xml \
-            -DoutputName=bom-java \
-            -Dcyclonedx.outputDirectory="${BOM_DIR}"
-
-      # ---------- Java (Gradle) ----------
-      - name: Install Gradle
-        if: ${{ hashFiles('**/build.gradle', '**/build.gradle.kts') != '' }}
-        shell: bash
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y gradle
-
-      - name: Java (Gradle) | Generate CycloneDX BOM
-        if: ${{ hashFiles('**/build.gradle', '**/build.gradle.kts') != '' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Creating CycloneDX Gradle init script..."
-          cat > /tmp/cyclonedx-init.gradle <<'EOF'
-          initscript {
-            repositories { mavenCentral() }
-            dependencies { classpath 'org.cyclonedx:cyclonedx-gradle-plugin:1.9.0' }
-          }
-          allprojects {
-            apply plugin: org.cyclonedx.gradle.CycloneDxPlugin
-          }
-          EOF
-          echo "Generating Gradle CycloneDX BOM..."
-          gradle -I /tmp/cyclonedx-init.gradle \
-            -Pcyclonedx.format=xml \
-            -Pcyclonedx.outputName=bom-gradle \
-            -Pcyclonedx.outputDirectory="${BOM_DIR}" \
-            cyclonedxBom
-
-      # ---------- Verify BOMs ----------
-      - name: List generated BOMs
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "BOMs generated (if any):"
-          ls -lh "${BOM_DIR}" || true
-
-      # ---------- Upload all BOMs to Dependency-Track ----------
-      - name: Upload CycloneDX BOMs to Dependency-Track
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=("${BOM_DIR}"/*.xml)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No BOM files to upload. Exiting gracefully."
-            exit 0
-          fi
-          for f in "${files[@]}"; do
-            echo "Uploading ${f} ..."
-            curl -sS -f -X POST "${DTRACK_APPLICATION_URL}" \
-              -H "X-Api-Key: ${DTRACK_API_KEY}" \
-              -F "project=${DTRACK_PROJECT_UUID}" \
-              -F "autoCreate=true" \
-              -F "bom=@${f}"
-            echo "OK: ${f}"
-          done
+          # Artifact name displayed in GitHub Actions UI
+          name: cyclonedx-bom
+          # Path to the BOM file to upload
+          path: ${{ env.BOM_PATH }}
+          # Fail the step if no files are found (ensures BOM was generated)
+          if-no-files-found: error

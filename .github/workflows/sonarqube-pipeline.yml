@@ -1,61 +1,73 @@
+# GitHub Actions workflow for SonarQube code quality scanning
+# This workflow installs SonarScanner, analyzes your codebase, and uploads results to SonarQube.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions → New repository secret):
+#   - SONAR_APPLICATION_NAME : The SonarQube project key (e.g. my-app)
+#   - SONAR_API_KEY          : SonarQube project token with analysis permissions
+#
+# Matches your Azure pipeline behavior:
+# - Triggers only on pushes to main
+# - Uses ubuntu-latest runner
+# - Checks out full git history (fetch-depth: 0)
+# - Installs SonarScanner CLI manually (no action change that could break auth)
+# - Runs with sonar.python.version=3.12
+#
+# If you ever need PR analysis, add "pull_request:" to the on: block.
+
 name: SonarQube Scan
 
 on:
   push:
-    branches: [ "master"]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: sonarqube-${{ github.ref }}
-  cancel-in-progress: true
+    branches:
+      - main
+  workflow_dispatch: {}   # allow manual runs
 
 jobs:
-  scan:
+  sonar-scan:
     runs-on: ubuntu-latest
+
+    # Keep secrets scoped and easy to reference
     env:
-      # SonarQube config from repository/organization secrets
-      SONAR_APPLICATION_KEY: "darrenCast_Tiredful-API"
-      SONAR_APPLICATION_URL: "https://sonarqube.managedbyparabellyx.com"
+      SONAR_APPLICATION_NAME: ${{ secrets.SONAR_APPLICATION_NAME }}
       SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
+      SONARQUBE_HOST_URL: https://sonarqube.managedbyparabellyx.com
+      SONAR_SCANNER_VERSION: 6.2.1.4610
+      SONAR_SCANNER_HOME: ${{ github.workspace }}/.sonar/sonar-scanner-${{ env.SONAR_SCANNER_VERSION }}
+
     steps:
+      # Checkout the repository code to the runner
+      # Fetch all history for SonarQube to analyze code changes properly (equivalent to fetchDepth: 0)
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Cache SonarScanner
-        uses: actions/cache@v4
-        with:
-          path: ~/.sonar/sonar-scanner-6.2.1.4610
-          key: sonar-scanner-6.2.1.4610
-
-      - name: Install SonarScanner
+      # Download, install, and run SonarScanner (same approach as your Azure pipeline)
+      - name: Download, Configure, and Run SonarScanner
         shell: bash
         run: |
           set -euo pipefail
-          export SONAR_SCANNER_VERSION=6.2.1.4610
-          export SONAR_DIR="$HOME/.sonar"
-          export SONAR_SCANNER_HOME="$SONAR_DIR/sonar-scanner-$SONAR_SCANNER_VERSION"
 
-          if [ ! -d "$SONAR_SCANNER_HOME" ]; then
-            mkdir -p "$SONAR_DIR"
-            curl --create-dirs -sSLo "$SONAR_DIR/sonar-scanner.zip" \
-              "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-$SONAR_SCANNER_VERSION.zip"
-            unzip -o "$SONAR_DIR/sonar-scanner.zip" -d "$SONAR_DIR/"
-          fi
+          # Prepare folders
+          mkdir -p "$GITHUB_WORKSPACE/.sonar"
+          cd "$GITHUB_WORKSPACE/.sonar"
 
-          echo "$SONAR_SCANNER_HOME/bin" >> "$GITHUB_PATH"
-          echo "SONAR_SCANNER_OPTS=-server" >> "$GITHUB_ENV"
+          # Download SonarScanner CLI from official distribution
+          curl --fail --location --silent --show-error --output sonar-scanner.zip \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}.zip"
 
-      - name: Run SonarScanner
-        shell: bash
-        run: |
+          # Extract and add to PATH
+          unzip -o sonar-scanner.zip
+          export PATH="${SONAR_SCANNER_HOME}/bin:${PATH}"
+          export SONAR_SCANNER_OPTS="-server"
+
+          # Basic sanity check
+          sonar-scanner --version
+
+          # Execute SonarQube code analysis scan
           sonar-scanner \
-            -Dsonar.projectKey="${SONAR_APPLICATION_KEY}" \
+            -Dsonar.projectKey="${SONAR_APPLICATION_NAME}" \
             -Dsonar.sources=. \
-            -Dsonar.host.url="${SONAR_APPLICATION_URL}" \
+            -Dsonar.host.url="${SONARQUBE_HOST_URL}" \
             -Dsonar.python.version=3.12 \
             -Dsonar.token="${SONAR_API_KEY}"
