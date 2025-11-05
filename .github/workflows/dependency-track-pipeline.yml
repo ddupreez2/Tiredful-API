@@ -1,15 +1,31 @@
+# GitHub Actions workflow for generating and uploading SBOM to Dependency-Track
+# This workflow uses CycloneDX format to generate a BOM from Python dependencies
+# and automatically uploads it to Dependency-Track for vulnerability scanning.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions → New repository secret):
+#   - DTRACK_API_KEY      : API key for Dependency-Track authentication
+#   - DTRACK_PROJECT_UUID : Unique identifier for the project in Dependency-Track
+#
+# Workflow behavior:
+# - Triggers on push to main or broken branches, or manual dispatch
+# - Uses ubuntu-latest runner
+# - Checks out full git history (fetch-depth: 0)
+# - Generates CycloneDX XML BOM from requirements.txt
+# - Uploads BOM to Dependency-Track API for vulnerability analysis
+# - Saves BOM as workflow artifact for download/debugging
+
 name: Generate & Upload SBOM (CycloneDX → Dependency-Track)
 
 on:
   push:
-    branches: [ main, broken ]
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
   sbom:
     runs-on: ubuntu-latest
+    
     env:
-      # Required: set these as repository secrets
       DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
       DTRACK_PROJECT_UUID: ${{ secrets.DTRACK_PROJECT_UUID }}
 
@@ -51,7 +67,6 @@ jobs:
           echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
 
       - name: Upload BOM to Dependency-Track
-        # Reuse the values we exported / inherited
         env:
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
