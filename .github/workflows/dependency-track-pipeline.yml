@@ -1,97 +1,68 @@
-# Workflow name: Generates a Software Bill of Materials (SBOM) in CycloneDX format
-# and uploads it to Dependency-Track for vulnerability analysis and license compliance
 name: Generate & Upload SBOM (CycloneDX → Dependency-Track)
 
-# Workflow triggers:
-# - Runs on push to main or broken branches
-# - Can be manually triggered via workflow_dispatch
 on:
   push:
     branches: [ main, broken ]
   workflow_dispatch:
 
 jobs:
-  # Single job that generates SBOM and uploads to Dependency-Track
   sbom:
     runs-on: ubuntu-latest
     env:
-      # Dependency-Track API key for authentication (stored in GitHub Secrets)
+      # Required: set these as repository secrets
       DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
-      # Dependency-Track project UUID to identify which project this BOM belongs to
       DTRACK_PROJECT_UUID: ${{ secrets.DTRACK_PROJECT_UUID }}
 
     steps:
-      # Step 1: Checkout repository code to runner
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Step 2: Set up Python environment
-      # Uses the latest Python 3.x version available on the runner
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
           check-latest: true
 
-      # Step 3: Install CycloneDX BOM generator tool
-      # CycloneDX is a lightweight SBOM standard that can be consumed by Dependency-Track
       - name: Install CycloneDX for Python
         run: |
-          echo "Installing CycloneDX..."
-          # Upgrade pip to latest version for better package compatibility
+          set -euo pipefail
           python -m pip install --upgrade pip
-          # Install the CycloneDX BOM generator for Python projects
           python -m pip install cyclonedx-bom
-          # Verify installation by checking if command exists (non-blocking)
           command -v cyclonedx-py || true
-          # Verify Python module can be imported (non-blocking)
-          python -c "import cyclonedx_py, sys; print('cyclonedx_py import OK')" || true
+          python -c "import cyclonedx_py; print('cyclonedx_py import OK')" || true
 
-      # Step 4: Generate SBOM from requirements.txt
-      # Analyzes requirements.txt and creates a CycloneDX XML BOM file
-      # Mirrors: cyclonedx-py requirements -o $(Agent.TempDirectory)/bom.xml
       - name: Generate BOM from requirements.txt
         run: |
-          # Exit on error, undefined variables, and pipe failures
           set -euo pipefail
-          # Set BOM path using RUNNER_TEMP environment variable (automatically set by GitHub Actions)
+          # Use the runner's temp directory via shell env ($RUNNER_TEMP), not a YAML expression
           BOM_PATH="${RUNNER_TEMP}/bom.xml"
-          echo "Generating BOM..."
-          # Try to use cyclonedx-py command if available, otherwise use Python module
+
+          echo "Generating BOM at: $BOM_PATH"
           if command -v cyclonedx-py >/dev/null 2>&1; then
             cyclonedx-py requirements -o "$BOM_PATH"
           else
             python -m cyclonedx_py requirements -o "$BOM_PATH"
           fi
-          echo "Verifying BOM..."
-          # List the generated BOM file to confirm it was created
-          ls -lh "$BOM_PATH"
-          # Export BOM_PATH for subsequent steps
-          echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
-        # Note: If your file isn't named requirements.txt, set REQUIREMENTS_FILE in env or edit command.
 
-      # Step 5: Upload generated BOM to Dependency-Track API
-      # Dependency-Track will analyze the BOM for known vulnerabilities and license issues
-      # Mirrors the Azure curl call
+          ls -lh "$BOM_PATH"
+          # make BOM_PATH available to later steps
+          echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
+
       - name: Upload BOM to Dependency-Track
+        # Reuse the values we exported / inherited
         env:
-          # Re-export env vars for this step (inherited from job-level env)
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
         run: |
-          # Exit on error, undefined variables, and pipe failures
           set -euo pipefail
-          # Validate that required secrets are configured
           if [ -z "${DTRACK_API_KEY:-}" ] || [ -z "${DTRACK_PROJECT_UUID:-}" ]; then
-            echo "DTRACK secrets missing. Add DTRACK_API_KEY and DTRACK_PROJECT_UUID in repo Settings → Secrets and variables → Actions."
+            echo "Missing secrets: DTRACK_API_KEY and/or DTRACK_PROJECT_UUID."
             exit 1
           fi
+
           echo "Uploading BOM to Dependency-Track..."
-          # POST request to Dependency-Track BOM upload endpoint
-          # -sS: Silent mode but show errors
-          # -X POST: Use POST method
-          # -H: Set headers for content type and API key authentication
-          # -F: Form data fields (project UUID and BOM file)
           curl -sS -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
             -H "Content-Type: multipart/form-data" \
             -H "X-Api-Key: ${DTRACK_API_KEY}" \
@@ -99,14 +70,9 @@ jobs:
             -F "bom=@${BOM_PATH}"
           echo "Upload complete."
 
-      # Step 6: Save BOM as workflow artifact for download/inspection
-      # This step is optional - allows you to download the generated BOM from GitHub Actions UI
       - name: Keep SBOM as workflow artifact (optional)
         uses: actions/upload-artifact@v4
         with:
-          # Artifact name displayed in GitHub Actions UI
           name: cyclonedx-bom
-          # Path to the BOM file to upload (BOM_PATH is set in previous step via GITHUB_ENV)
           path: ${{ env.BOM_PATH }}
-          # Fail the step if no files are found (ensures BOM was generated)
           if-no-files-found: error
