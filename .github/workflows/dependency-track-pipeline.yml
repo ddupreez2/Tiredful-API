@@ -2,7 +2,7 @@ name: Universal SBOM (Python + Node + Java)
 
 on:
   push:
-    branches: [ master]
+    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
