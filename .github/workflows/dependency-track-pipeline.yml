@@ -63,6 +63,20 @@ jobs:
           fi
 
           ls -lh "$BOM_PATH"
+          
+          # Verify BOM was generated and show summary
+          if [ ! -f "$BOM_PATH" ]; then
+            echo "❌ BOM file was not generated!"
+            exit 1
+          fi
+          
+          echo "BOM generated successfully. Showing first 50 lines:"
+          head -n 50 "$BOM_PATH" || true
+          
+          # Count components in BOM (basic check)
+          COMPONENT_COUNT=$(grep -c "<component" "$BOM_PATH" || echo "0")
+          echo "Components found in BOM: ${COMPONENT_COUNT}"
+          
           # make BOM_PATH available to later steps
           echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
 
@@ -78,12 +92,29 @@ jobs:
           fi
 
           echo "Uploading BOM to Dependency-Track..."
-          curl -sS -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
-            -H "Content-Type: multipart/form-data" \
+          echo "Project UUID: ${DTRACK_PROJECT_UUID}"
+          echo "BOM file: ${BOM_PATH}"
+          echo "BOM file size: $(ls -lh "${BOM_PATH}" | awk '{print $5}')"
+          
+          # Upload BOM and capture response
+          HTTP_STATUS=$(curl -sS -w "%{http_code}" -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
             -H "X-Api-Key: ${DTRACK_API_KEY}" \
             -F "project=${DTRACK_PROJECT_UUID}" \
-            -F "bom=@${BOM_PATH}"
-          echo "Upload complete."
+            -F "bom=@${BOM_PATH}" \
+            -o /tmp/dtrack_response.json)
+          
+          # Extract response body
+          RESPONSE_BODY=$(cat /tmp/dtrack_response.json 2>/dev/null || echo "")
+          
+          echo "HTTP Status: ${HTTP_STATUS}"
+          echo "Response: ${RESPONSE_BODY}"
+          
+          if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
+            echo "✅ Upload successful!"
+          else
+            echo "❌ Upload failed with HTTP ${HTTP_STATUS}"
+            exit 1
+          fi
 
       - name: Keep SBOM as workflow artifact (optional)
         uses: actions/upload-artifact@v4
