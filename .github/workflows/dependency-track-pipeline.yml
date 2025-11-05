@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Output directory for SBOMs
-      BOM_DIR: ${{ runner.temp }}/boms
+      BOM_DIR: /tmp/boms
       # Dependency-Track config from repository/organization secrets
       DTRACK_APPLICATION_URL: "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom"
       DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
