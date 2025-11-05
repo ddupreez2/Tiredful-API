@@ -2,7 +2,7 @@ name: SonarQube Scan
 
 on:
   push:
-    branches: [ "main", "broken" ]
+    branches: [ "master"]
   workflow_dispatch:
 
 permissions:
@@ -52,10 +52,6 @@ jobs:
 
       - name: Run SonarScanner
         shell: bash
-        env:
-          SONAR_APPLICATION_NAME: ${{ vars.SONAR_APPLICATION_NAME }}
-          SONAR_APPLICATION_URL: ${{ vars.SONAR_APPLICATION_URL }}
-          SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
         run: |
           sonar-scanner \
             -Dsonar.projectKey="${SONAR_APPLICATION_NAME}" \
