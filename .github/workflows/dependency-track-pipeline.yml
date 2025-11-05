@@ -18,7 +18,7 @@ name: SBOM → Dependency-Track
 
 on:
   push:
-    branches: [ master ]   # add main/broken if needed
+    branches: [ master ]
   workflow_dispatch:
 
 jobs:
@@ -36,28 +36,50 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install CycloneDX
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install cyclonedx-bom
-
-      - name: Generate BOM File
+      # Make an isolated environment and install your deps so versions are concrete
+      - name: Create venv & install deps
+        shell: bash
         run: |
           set -euo pipefail
           test -f "$REQUIREMENTS_FILE" || { echo "Missing $REQUIREMENTS_FILE"; exit 1; }
+
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r "$REQUIREMENTS_FILE"
+          # Install the SBOM tool inside the same venv so it "sees" the installed libs
+          pip install cyclonedx-bom
+
+      - name: Generate SBOM from installed environment (exact versions)
+        shell: bash
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+
           BOM_PATH="${RUNNER_TEMP}/bom.xml"
           echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
-          cyclonedx-py requirements "$REQUIREMENTS_FILE" --of XML -o "$BOM_PATH"
-          test -s "$BOM_PATH"
-          ls -lh "$BOM_PATH"
 
-      - name: Upload BOM File
+          # Use environment mode so components include resolved versions (purl with @version)
+          cyclonedx-py environment --of XML -o "$BOM_PATH"
+
+          # Quick sanity: ensure components exist and include versions
+          head -n 25 "$BOM_PATH" || true
+          test -s "$BOM_PATH"
+
+      - name: Upload BOM to Dependency-Track
+        shell: bash
         run: |
           set -euo pipefail
           test -s "$BOM_PATH" || { echo "BOM missing/empty"; exit 1; }
-          # Let curl set multipart boundary; explicitly mark file as XML
+
           curl -sS -f -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
             -H "X-Api-Key: $DTRACK_API_KEY" \
             -F "project=$DTRACK_PROJECT_UUID" \
+            -F "autoCreate=true" \
             -F "bom=@$BOM_PATH;type=application/xml"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cyclonedx-bom
+          path: ${{ env.BOM_PATH }}
+          if-no-files-found: error
