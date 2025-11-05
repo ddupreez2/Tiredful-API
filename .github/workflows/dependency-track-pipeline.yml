@@ -7,10 +7,10 @@
 #   - DTRACK_PROJECT_UUID : Unique identifier for the project in Dependency-Track
 #
 # Workflow behavior:
-# - Triggers on push to main or broken branches, or manual dispatch
+# - Triggers on push to main branches, or manual dispatch
 # - Uses ubuntu-latest runner
 # - Checks out full git history (fetch-depth: 0)
-# - Generates CycloneDX JSON BOM from requirements.txt
+# - Generates CycloneDX XML BOM from requirements.txt
 # - Uploads BOM to Dependency-Track API for vulnerability analysis
 # - Saves BOM as workflow artifact for download/debugging
 
@@ -53,74 +53,26 @@ jobs:
         run: |
           set -euo pipefail
           # Use the runner's temp directory via shell env ($RUNNER_TEMP), not a YAML expression
-          # Generate JSON format (Dependency-Track accepts both JSON and XML)
-          BOM_PATH="${RUNNER_TEMP}/bom.json"
+          BOM_PATH="${RUNNER_TEMP}/bom.xml"
 
           echo "Generating BOM at: $BOM_PATH"
           if command -v cyclonedx-py >/dev/null 2>&1; then
-            cyclonedx-py requirements -f json -o "$BOM_PATH"
+            cyclonedx-py requirements -o "$BOM_PATH"
           else
-            python -m cyclonedx_py requirements -f json -o "$BOM_PATH"
+            python -m cyclonedx_py requirements -o "$BOM_PATH"
           fi
 
           ls -lh "$BOM_PATH"
-          
-          # Verify BOM was generated and show summary
-          if [ ! -f "$BOM_PATH" ]; then
-            echo "❌ BOM file was not generated!"
-            exit 1
-          fi
-          
-          echo "BOM generated successfully. Showing first 50 lines:"
-          head -n 50 "$BOM_PATH" || true
-          
-          # Count components in BOM (works for JSON format)
-          if command -v jq >/dev/null 2>&1; then
-            COMPONENT_COUNT=$(jq '.components | length' "$BOM_PATH" 2>/dev/null || echo "0")
-          else
-            # Fallback: use Python to count components (Python is already installed)
-            COMPONENT_COUNT=$(python3 -c "import json; data = json.load(open('$BOM_PATH')); print(len(data.get('components', [])))" 2>/dev/null || echo "0")
-          fi
-          echo "Components found in BOM: ${COMPONENT_COUNT}"
-          
           # make BOM_PATH available to later steps
           echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload BOM to Dependency-Track
-        env:
-          DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
-          DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
+      - name: Upload to Dependency-Track
         run: |
           set -euo pipefail
-          if [ -z "${DTRACK_API_KEY:-}" ] || [ -z "${DTRACK_PROJECT_UUID:-}" ]; then
-            echo "Missing secrets: DTRACK_API_KEY and/or DTRACK_PROJECT_UUID."
-            exit 1
-          fi
-
-          echo "Uploading BOM to Dependency-Track..."
-          echo "Project UUID: ${DTRACK_PROJECT_UUID}"
-          echo "BOM file: ${BOM_PATH}"
-          echo "BOM file size: $(ls -lh "${BOM_PATH}" | awk '{print $5}')"
-          
-          # Upload BOM and capture response
-          HTTP_STATUS=$(curl -sS -w "%{http_code}" -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
-            -H "X-Api-Key: ${DTRACK_API_KEY}" \
-            -F "project=${DTRACK_PROJECT_UUID}" \
-            -F "bom=@${BOM_PATH}" \
-            -o /tmp/dtrack_response.json)
-          
-          # Extract response body
-          RESPONSE_BODY=$(cat /tmp/dtrack_response.json 2>/dev/null || echo "")
-          
-          echo "HTTP Status: ${HTTP_STATUS}"
-          echo "Response: ${RESPONSE_BODY}"
-          
-          if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
-            echo "✅ Upload successful!"
-          else
-            echo "❌ Upload failed with HTTP ${HTTP_STATUS}"
-            exit 1
-          fi
+          B64="$(base64 -w 0 "$BOM_PATH" 2>/dev/null || base64 "$BOM_PATH")"
+          curl -sS -f -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
+            -H "X-Api-Key: $DTRACK_API_KEY" -H "Content-Type: application/json" \
+            -d "{\"project\":\"$DTRACK_PROJECT_UUID\",\"bom\":\"$B64\"}"
 
       - name: Keep SBOM as workflow artifact (optional)
         uses: actions/upload-artifact@v4
