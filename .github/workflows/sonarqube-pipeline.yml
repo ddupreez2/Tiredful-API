@@ -1,97 +1,66 @@
 # GitHub Actions workflow for SonarQube code quality scanning
-# This pipeline installs SonarScanner, analyzes your codebase, and uploads results to SonarQube
-# SonarQube performs static code analysis to detect bugs, vulnerabilities, code smells, and security issues
+# This workflow installs SonarScanner, analyzes your codebase, and uploads results to SonarQube.
 #
-# Required GitHub Secrets (Repository Settings > Secrets and variables > Actions):
-#   - SONAR_APPLICATION_KEY : The SonarQube project key (e.g. my-app)
-#                             (Defined when creating a project in SonarQube UI)
-#   - SONAR_API_KEY         : SonarQube project token with analysis permissions
-#                             (Generate in SonarQube UI: My Account > Security > Generate Tokens)
+# Required repository secrets (Settings → Secrets and variables → Actions → New repository secret):
+#   - SONAR_APPLICATION_NAME : The SonarQube project key (e.g. my-app)
+#   - SONAR_API_KEY          : SonarQube project token with analysis permissions
+#
+# Matches your Azure pipeline behavior:
+# - Triggers only on pushes to main
+# - Uses ubuntu-latest runner
+# - Checks out full git history (fetch-depth: 0)
+# - Installs SonarScanner CLI manually (no action change that could break auth)
+# - Runs with sonar.python.version=3.12
+#
+# If you ever need PR analysis, add "pull_request:" to the on: block.
 
-# Workflow name displayed in GitHub Actions UI
 name: SonarQube Scan
 
-# Workflow trigger configuration
-# This workflow runs automatically on:
-#   - push: When code is pushed to the 'main' branch
-#   - workflow_dispatch: Manual trigger from the GitHub Actions UI (allows running on-demand)
 on:
   push:
     branches:
-      - master  # Triggers on pushes to main branch
-  workflow_dispatch: {}  # Allows manual execution from GitHub Actions UI
+      - master
+  workflow_dispatch: {}
 
-# Define the jobs that make up this workflow
 jobs:
-  # Single job named 'sonar-scan' that handles SonarQube analysis
   sonar-scan:
-    # Use GitHub-hosted Ubuntu runner (latest version)
     runs-on: ubuntu-latest
 
-    # Environment variables available to all steps in this job
-    # These configure SonarScanner and authenticate with SonarQube
     env:
-      SONAR_APPLICATION_KEY: ${{ secrets.SONAR_APPLICATION_KEY }}  # Project identifier in SonarQube
-      SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}                  # Authentication token for SonarQube API
-      SONARQUBE_HOST_URL: https://sonarqube.managedbyparabellyx.com # SonarQube server URL
-      SONAR_SCANNER_VERSION: 6.2.1.4610                            # SonarScanner CLI version to download
+      SONAR_APPLICATION_KEY: ${{ secrets.SONAR_APPLICATION_KEY }}
+      SONAR_API_KEY: ${{ secrets.SONAR_API_KEY }}
+      SONARQUBE_HOST_URL: https://sonarqube.managedbyparabellyx.com
+      SONAR_SCANNER_VERSION: 6.2.1.4610
 
-    # List of steps to execute sequentially
     steps:
-      # Step 1: Checkout the repository code
-      # This step clones the repository so SonarScanner can analyze the codebase
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch full git history (required for SonarQube to calculate code metrics like new code)
+          fetch-depth: 0
 
-      # Step 2: Download, Configure, and Run SonarScanner
-      # This step installs SonarScanner CLI and runs code analysis
-      # SonarScanner is downloaded as a ZIP archive and extracted locally (not installed system-wide)
       - name: Download, Configure, and Run SonarScanner
-        shell: bash  # Explicitly use bash shell for consistent behavior
+        shell: bash
         run: |
-          # Enable strict error handling: exit on error, undefined variables, and pipe failures
           set -euo pipefail
 
-          # Compose this path here (not in env:) to avoid YAML expression parsing issues
-          # $GITHUB_WORKSPACE is the default working directory on the runner (typically /home/runner/work/repo-name/repo-name)
+          # Compose this path here (not in env:) to avoid expression parsing issues
           SONAR_SCANNER_HOME="$GITHUB_WORKSPACE/.sonar/sonar-scanner-${SONAR_SCANNER_VERSION}"
 
-          # Create directory for SonarScanner installation
           mkdir -p "$GITHUB_WORKSPACE/.sonar"
           cd "$GITHUB_WORKSPACE/.sonar"
 
-          # Download SonarScanner CLI from official SonarSource binaries repository
-          # --fail: Fail silently on HTTP errors (don't output HTML error pages)
-          # --location: Follow redirects (3xx responses)
-          # --silent: Don't show progress meter
-          # --show-error: Show error messages even when silent
-          # --output: Write output to file (sonar-scanner.zip)
           curl --fail --location --silent --show-error --output sonar-scanner.zip \
             "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}.zip"
 
-          # Extract the downloaded ZIP archive
-          # -o: Overwrite files without prompting (needed for idempotent runs)
           unzip -o sonar-scanner.zip
-
-          # Add SonarScanner binary to PATH so it can be executed from anywhere
-          # The bin directory contains the sonar-scanner executable
           export PATH="${SONAR_SCANNER_HOME}/bin:${PATH}"
-
-          # Set JVM options for SonarScanner
-          # -server: Use the server JVM (optimized for long-running processes, better performance)
           export SONAR_SCANNER_OPTS="-server"
 
-          # Verify SonarScanner installation by checking version
-          # This confirms the binary is accessible and working
           sonar-scanner --version
 
-          # Run SonarScanner analysis
-          # The -D flags are Java system properties passed to SonarScanner
           sonar-scanner \
-            -Dsonar.projectKey="${SONAR_APPLICATION_KEY}" \    # Unique project identifier in SonarQube
-            -Dsonar.sources=. \                                 # Source code directory to analyze (current directory)
-            -Dsonar.host.url="${SONARQUBE_HOST_URL}" \         # SonarQube server URL to upload results to
-            -Dsonar.python.version=3.12 \                       # Python version for language-specific analysis
-            -Dsonar.token="${SONAR_API_KEY}"                    # Authentication token for SonarQube API
+            -Dsonar.projectKey="${SONAR_APPLICATION_KEY}" \
+            -Dsonar.sources=. \
+            -Dsonar.host.url="${SONARQUBE_HOST_URL}" \
+            -Dsonar.python.version=3.12 \
+            -Dsonar.token="${SONAR_API_KEY}"

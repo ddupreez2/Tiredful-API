@@ -1,124 +1,83 @@
-# GitHub Actions workflow for generating and uploading SBOMs (Software Bill of Materials)
-# This pipeline supports multiple languages: Python, Node.js, and Java (Maven/Gradle)
-# SBOMs are generated in CycloneDX format and uploaded to Dependency-Track for vulnerability scanning
+# GitHub Actions workflow for generating and uploading SBOM to Dependency-Track
+# This workflow uses CycloneDX format to generate a BOM from Python dependencies
+# and automatically uploads it to Dependency-Track for vulnerability scanning.
 #
-# Required GitHub Secrets (Repository Settings > Secrets and variables > Actions):
-#   - DTRACK_API_KEY      : API key for authenticating with Dependency-Track
-#                            (Generate this in Dependency-Track UI: Administration > Access Management > Teams > API Keys)
+# Required repository secrets (Settings → Secrets and variables → Actions → New repository secret):
+#   - DTRACK_API_KEY      : API key for Dependency-Track authentication
 #   - DTRACK_PROJECT_UUID : Unique identifier for the project in Dependency-Track
-#                            (Found in the project URL or project settings in Dependency-Track UI)
+#
+# Workflow behavior:
+# - Triggers on push to main or broken branches, or manual dispatch
+# - Uses ubuntu-latest runner
+# - Checks out full git history (fetch-depth: 0)
+# - Generates CycloneDX XML BOM from requirements.txt
+# - Uploads BOM to Dependency-Track API for vulnerability analysis
+# - Saves BOM as workflow artifact for download/debugging
 
 name: Generate & Upload SBOM (CycloneDX → Dependency-Track)
 
-# Workflow trigger configuration
-# This workflow runs automatically on:
-#   - push: When code is pushed to the 'main' branch
-#   - workflow_dispatch: Manual trigger from the GitHub Actions UI (allows running on-demand)
 on:
   push:
-    branches: [ master ]  # Triggers on pushes to main branch
-  workflow_dispatch:    # Allows manual execution from GitHub Actions UI
+    branches: [ master ]
+  workflow_dispatch:
 
-# Define the jobs that make up this workflow
 jobs:
-  # Single job named 'sbom' that handles SBOM generation and upload
   sbom:
-    # Use GitHub-hosted Ubuntu runner (latest version)
     runs-on: ubuntu-latest
     
-    # Environment variables available to all steps in this job
-    # These are pulled from GitHub Secrets and used for Dependency-Track authentication
     env:
-      DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}           # API key for Dependency-Track authentication
-      DTRACK_PROJECT_UUID: ${{ secrets.DTRACK_PROJECT_UUID }} # Project identifier in Dependency-Track
+      DTRACK_API_KEY: ${{ secrets.DTRACK_API_KEY }}
+      DTRACK_PROJECT_UUID: ${{ secrets.DTRACK_PROJECT_UUID }}
 
-    # List of steps to execute sequentially
     steps:
-      # Step 1: Checkout the repository code
-      # This step clones the repository so subsequent steps can access the codebase
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch full git history (useful if BOM generation needs commit metadata)
+          fetch-depth: 0
 
-      # Step 2: Set up Python environment
-      # This step installs Python on the runner, required for running CycloneDX tools
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'        # Use any available Python 3.x version
-          check-latest: true           # Ensure the latest patch version is used
+          python-version: '3.x'
+          check-latest: true
 
-      # Step 3: Install CycloneDX tooling for Python
-      # CycloneDX is a standard format for SBOMs. This tool generates BOMs from Python dependencies
       - name: Install CycloneDX for Python
         run: |
-          # Enable strict error handling: exit on error, undefined variables, and pipe failures
           set -euo pipefail
-          # Upgrade pip to latest version for better package resolution
           python -m pip install --upgrade pip
-          # Install the CycloneDX Python package (provides cyclonedx-py CLI tool)
           python -m pip install cyclonedx-bom
-          # Verify CLI tool is available (command -v checks if command exists in PATH)
-          # The || true ensures this doesn't fail if command isn't found (fallback to module import)
           command -v cyclonedx-py || true
-          # Verify Python module can be imported (alternative if CLI tool not in PATH)
           python -c "import cyclonedx_py; print('cyclonedx_py import OK')" || true
 
-      # Step 4: Generate BOM (Bill of Materials) from requirements.txt
-      # This step analyzes Python dependencies and creates a CycloneDX XML BOM file
       - name: Generate BOM from requirements.txt
         run: |
-          # Enable strict error handling
           set -euo pipefail
           # Use the runner's temp directory via shell env ($RUNNER_TEMP), not a YAML expression
-          # $RUNNER_TEMP is a GitHub Actions environment variable pointing to a temporary directory
           BOM_PATH="${RUNNER_TEMP}/bom.xml"
 
           echo "Generating BOM at: $BOM_PATH"
-          # Try to use the CLI tool first (if it was installed and available in PATH)
-          # The >/dev/null 2>&1 redirects output to suppress command not found errors
           if command -v cyclonedx-py >/dev/null 2>&1; then
-            # Generate BOM from requirements.txt in CycloneDX XML format
             cyclonedx-py requirements -o "$BOM_PATH"
           else
-            # Fallback: use Python module directly if CLI tool not available
             python -m cyclonedx_py requirements -o "$BOM_PATH"
           fi
 
-          # Display BOM file size and permissions for verification
           ls -lh "$BOM_PATH"
-          # Make BOM_PATH available to later steps via GitHub Actions environment variable
-          # This allows the Upload step to reference the generated file
+          # make BOM_PATH available to later steps
           echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
 
-      # Step 5: Upload the generated BOM to Dependency-Track
-      # Dependency-Track will analyze the BOM for known vulnerabilities
       - name: Upload BOM to Dependency-Track
-        # Re-export environment variables for this step (explicit scope)
         env:
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
         run: |
-          # Enable strict error handling
           set -euo pipefail
-          # Validate that required secrets are set (fail fast if missing)
-          # The :- syntax provides empty string if variable is unset or null
           if [ -z "${DTRACK_API_KEY:-}" ] || [ -z "${DTRACK_PROJECT_UUID:-}" ]; then
             echo "Missing secrets: DTRACK_API_KEY and/or DTRACK_PROJECT_UUID."
             exit 1
           fi
 
           echo "Uploading BOM to Dependency-Track..."
-          # Upload BOM using curl with multipart form data
-          # -sS: Silent mode but show errors
-          # -X POST: Use POST method
-          # -H: Set HTTP headers
-          #   - Content-Type: multipart/form-data for file upload
-          #   - X-Api-Key: Dependency-Track API authentication header
-          # -F: Form data fields
-          #   - project: The project UUID to associate this BOM with
-          #   - bom: The BOM file (@ prefix indicates file path)
           curl -sS -X POST "https://dependencytrack-api.managedbyparabellyx.com/api/v1/bom" \
             -H "Content-Type: multipart/form-data" \
             -H "X-Api-Key: ${DTRACK_API_KEY}" \
@@ -126,11 +85,9 @@ jobs:
             -F "bom=@${BOM_PATH}"
           echo "Upload complete."
 
-      # Step 6: Save BOM as workflow artifact (optional)
-      # This allows downloading the BOM file from the workflow run for inspection or archival
       - name: Keep SBOM as workflow artifact (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: cyclonedx-bom           # Artifact name (visible in workflow run UI)
-          path: ${{ env.BOM_PATH }}     # Path to the BOM file generated in previous step
-          if-no-files-found: error      # Fail if BOM file doesn't exist (ensures upload step worked)
+          name: cyclonedx-bom
+          path: ${{ env.BOM_PATH }}
+          if-no-files-found: error
