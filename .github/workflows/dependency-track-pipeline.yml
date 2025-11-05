@@ -10,7 +10,7 @@
 # - Triggers on push to main or broken branches, or manual dispatch
 # - Uses ubuntu-latest runner
 # - Checks out full git history (fetch-depth: 0)
-# - Generates CycloneDX XML BOM from requirements.txt
+# - Generates CycloneDX JSON BOM from requirements.txt
 # - Uploads BOM to Dependency-Track API for vulnerability analysis
 # - Saves BOM as workflow artifact for download/debugging
 
@@ -53,13 +53,14 @@ jobs:
         run: |
           set -euo pipefail
           # Use the runner's temp directory via shell env ($RUNNER_TEMP), not a YAML expression
-          BOM_PATH="${RUNNER_TEMP}/bom.xml"
+          # Generate JSON format (Dependency-Track accepts both JSON and XML)
+          BOM_PATH="${RUNNER_TEMP}/bom.json"
 
           echo "Generating BOM at: $BOM_PATH"
           if command -v cyclonedx-py >/dev/null 2>&1; then
-            cyclonedx-py requirements -o "$BOM_PATH"
+            cyclonedx-py requirements -f json -o "$BOM_PATH"
           else
-            python -m cyclonedx_py requirements -o "$BOM_PATH"
+            python -m cyclonedx_py requirements -f json -o "$BOM_PATH"
           fi
 
           ls -lh "$BOM_PATH"
@@ -73,8 +74,13 @@ jobs:
           echo "BOM generated successfully. Showing first 50 lines:"
           head -n 50 "$BOM_PATH" || true
           
-          # Count components in BOM (basic check)
-          COMPONENT_COUNT=$(grep -c "<component" "$BOM_PATH" || echo "0")
+          # Count components in BOM (works for JSON format)
+          if command -v jq >/dev/null 2>&1; then
+            COMPONENT_COUNT=$(jq '.components | length' "$BOM_PATH" 2>/dev/null || echo "0")
+          else
+            # Fallback: use Python to count components (Python is already installed)
+            COMPONENT_COUNT=$(python3 -c "import json; data = json.load(open('$BOM_PATH')); print(len(data.get('components', [])))" 2>/dev/null || echo "0")
+          fi
           echo "Components found in BOM: ${COMPONENT_COUNT}"
           
           # make BOM_PATH available to later steps
