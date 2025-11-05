@@ -51,13 +51,11 @@ jobs:
       # Analyzes requirements.txt and creates a CycloneDX XML BOM file
       # Mirrors: cyclonedx-py requirements -o $(Agent.TempDirectory)/bom.xml
       - name: Generate BOM from requirements.txt
-        env:
-          # Use runner temp as the Azure `Agent.TempDirectory` equivalent
-          # Temporary path where the generated BOM XML file will be stored
-          BOM_PATH: ${{ runner.temp }}/bom.xml
         run: |
           # Exit on error, undefined variables, and pipe failures
           set -euo pipefail
+          # Set BOM path using RUNNER_TEMP environment variable (automatically set by GitHub Actions)
+          BOM_PATH="${RUNNER_TEMP}/bom.xml"
           echo "Generating BOM..."
           # Try to use cyclonedx-py command if available, otherwise use Python module
           if command -v cyclonedx-py >/dev/null 2>&1; then
@@ -68,6 +66,8 @@ jobs:
           echo "Verifying BOM..."
           # List the generated BOM file to confirm it was created
           ls -lh "$BOM_PATH"
+          # Export BOM_PATH for subsequent steps
+          echo "BOM_PATH=$BOM_PATH" >> "$GITHUB_ENV"
         # Note: If your file isn't named requirements.txt, set REQUIREMENTS_FILE in env or edit command.
 
       # Step 5: Upload generated BOM to Dependency-Track API
@@ -75,8 +75,6 @@ jobs:
       # Mirrors the Azure curl call
       - name: Upload BOM to Dependency-Track
         env:
-          # Use runner temp as the Azure `Agent.TempDirectory` equivalent
-          BOM_PATH: ${{ runner.temp }}/bom.xml
           # Re-export env vars for this step (inherited from job-level env)
           DTRACK_API_KEY: ${{ env.DTRACK_API_KEY }}
           DTRACK_PROJECT_UUID: ${{ env.DTRACK_PROJECT_UUID }}
@@ -108,7 +106,7 @@ jobs:
         with:
           # Artifact name displayed in GitHub Actions UI
           name: cyclonedx-bom
-          # Path to the BOM file to upload
+          # Path to the BOM file to upload (BOM_PATH is set in previous step via GITHUB_ENV)
           path: ${{ env.BOM_PATH }}
           # Fail the step if no files are found (ensures BOM was generated)
           if-no-files-found: error
